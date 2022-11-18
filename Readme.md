@@ -1,1 +1,739 @@
-New File 
+---
+title: "Analysis of df Programe Data"
+author: "`Jakub Kowalczyk"
+date: "`r Sys.Date()`"
+output:  
+  md_document:
+    variant: markdown_github
+    
+always_allow_html: true
+---
+
+
+```{r setup, include=FALSE}
+
+#Options --- 
+
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+options(digits=3)
+knitr::opts_chunk$set(fig.align = "center")
+
+# Package Load ----
+
+libraries <- c("tidyverse", "psych", "sjPlot", "patchwork", "stargazer", "kableExtra")
+
+lapply(libraries, library, character.only = T)
+
+
+
+# This will read in your own personal data:
+
+df <- read_csv("C:/Users/Jakub/Downloads/Data-Science-and-Statistics-Projects-main/Data-Science-and-Statistics-Projects-main/couchtok5_data.csv")
+
+```
+
+This sample data comes from "Couch to 5k", an NHS-sponsored fitness programme which lasts 9 weeks, taking participants from a gentle start up to a half-hour run. In this project, I was asked to analyse the data that has been collected from participants in 2 cities (Edinburgh and Glasgow), all of whom started the Couch to 5k programme, across the course of a year.
+
+The researchers' have two primary interests:
+
+-   They are interested in the psychological factors that make people continue on the programme
+
+-    and in the effects of taking the programme on health and well-being.
+
+At Week 0, all participants completed a questionnaire measuring the psychometric factors of accountability and self-motivation. Upon either completing the programme (Week 9) or dropping out (/< Week 9), participants completed a questionnaire which included a measure of their self-reported happiness, and a "health" measure derived from a number of physiological tests. Details of the data collected can be found in the table below.
+
+**Please note that Couch to 5k is a real programme, but the data presented is simulated**
+
+# Data Cleaning
+
+Before beginning data analysis or even cleaning, it is worth to visualise the data just to see if anything looks particularly unusual. This will be used to guide data cleaning procedures as well as later data analysis.
+
+```{r descriptives, fig.width= 14}
+
+# Code will not be shown from this chunk (because we set echo = FALSE in the very first chunk)
+# the output from this code will be shown. 
+
+#Visualisation - basic plots
+
+df %>% 
+  select(age, accountability, selfmot, health, happiness) %>% 
+  plot()
+
+```
+
+A short summary of the data cleaning:
+
+-   Two unusual values in age (unlikely a 120 year old will be doing a df)
+
+-   two unusual values in self_mot (-90 where the rest are around 20)
+
+The descriptives for this dataset can be found in the table below.
+
+**Table 1** *Table to show the descriptives of the dataset*
+
+```{r}
+
+describe(df) %>% 
+  select(-trimmed, -mad, -skew, -kurtosis, -se) %>% 
+   kable(col.names = c("Variables", "N", "Mean", "SD", "Median", "Min", "Max", "Range"), align = "c") %>% 
+  kable_styling(full_width =T)
+  
+```
+
+One participant also finished the program in week 13.
+
+**There is no need to remove outliers blindly**. Considering this, looking at the participants who are 100 years old, it can be seen that the rest of the data is normal for other values, and I am going to assume that the participants just mistakenly wrote a 1 in-front of their age (1 is close to 2 after all). These will be amended and included.
+
+For the self_mot values, I do not understand why there are two values that are -99, and it is unclear whether this is meant to be NA or not.
+
+Likewise, for the participant who finished the programme in week 13, I do not understand how this value has come to be.
+
+Because I cannot ascertain a plausible reason for those scores outside of the allowed range as well as having a sizeable sample size, I have taken a conservative approach in data analysis and exclude these participants by filtering the data by possible scale outcomes.
+
+Apart from this, some participants have misspelled "autumn" as "autunm", this will be amended for consistency.
+
+```{r cleaning}
+# Neither output nor code from this chunk will be shown in the compiled document. 
+
+#filtering all invalid that are below the valid response range
+
+df <- df %>% 
+  filter(selfmot > 0 & selfmot  < 35) %>% #filtering impossible values for self_mot
+  filter(week_stopped < 10) #fitered for impossible ending date values
+
+#adjusting invalid age responses - explain in text
+
+df$age[df$age > 100] <- df$age[df$age > 100] - 100
+
+#Autumn misspelling
+
+df <- df %>% 
+  mutate(season = replace(season, season == "autunm", "autumn"))
+
+#useful values for writing up and general
+
+df <- df %>% 
+  mutate(season = factor(season, levels = c("spring", "summer", "autumn", "winter" ))) # re-leveled the seasons, purely for aesthetic reasons 
+
+df <- df %>% 
+  mutate(week_stopped = as.factor(week_stopped)) %>% 
+  mutate(prog_fin = as.factor(ifelse(week_stopped == 9, 1, 0)))
+
+participant_total <- nrow(df)
+
+
+```
+
+This is how the descriptives look after data cleaning.
+
+```{r descriptives plots ,fig.width = 14}
+# Code will not be shown from this chunk (because we set echo = FALSE in the very first chunk)
+
+# the output from this code will be shown. 
+
+df %>% 
+  select(age, accountability, selfmot, health, happiness) %>% 
+  plot()
+
+season_plot <- df %>% 
+  ggplot(aes(season, fill = season)) + 
+  geom_bar() + 
+  labs(x = "City" , y = "Number of Participants") + 
+  theme_classic() +
+  scale_fill_brewer(palette = "GnBu")
+  #two misspellings of autumn - will change
+
+city_plot <- df %>% 
+  ggplot(aes(city, fill = city)) + 
+  geom_bar() +
+  labs(x = "Season" , y = "Number of Participants") + 
+  theme_classic()
+
+city_plot + season_plot
+```
+
+------------------------------------------------------------------------
+
+# Demographic Analysis
+
+## Previous Nationwide Survey Comparison
+
+In an earlier nationwide survey, researchers found that 45% of participants abandoned the programme before the halfway point in week 5, and a further 10% gave up before the end of the programme.
+
+Is this data in line with the previous survey?
+
+```{r q1a}
+abandonment_data <- df %>% 
+  group_by(week_stopped) %>% 
+  summarise(number = n()) %>% #grouping number of participants by week of completion/drop-out
+  mutate(percentage = (number/participant_total) * 100) #calculating percentage of drop out per week
+
+#calculating and assinging the percentage of participants that drop out before and after the half way point, as well as who have finished 
+
+before_half <- abandonment_data$percentage[1:4]
+
+after_half <- abandonment_data$percentage[5:8]
+
+finished <- abandonment_data$week_stopped[9]
+
+```
+
+In total,`r sum(before_half)`% of participants have abandoned the program before the halfway point in week five, and `r sum(after_half)`% of participants have abandoned the program after the half-way point which differs from the earlier nationwide survey data.
+
+A t-test was conducted to examine whether the difference between the two samples was statistically significant. A Shapiro-Wilk test of normality was also conducted to check for normality. No violations of normality were detected. Regardless, equality of variance was assumed to be *FALSE*, due to tests using Leven's assumption having less power and will therefore fail to reject the null-hypothesis of variances being equal (even when they differ).
+
+```{r q1a_testing, include = FALSE}
+
+#shapiro.test(before_half) 
+#shapiro.test(after_half)
+
+
+beforeh_ttest <- t.test(before_half, mu = 45, var.equal = FALSE)
+afterh_ttest <- t.test(after_half, mu = 10, var.equal = FALSE)
+
+```
+
+The results of the t-test suggest that there was a statistically significant difference in the percentage of participants who abandoned the program before the halfway point (*t* (`r beforeh_ttest$parameter`) = `r beforeh_ttest$statistic`, *p* /< .001), as well as after the halfway point (*t* (`r afterh_ttest$parameter`) = `r afterh_ttest$statistic`, *p* /< .001) of the current dataset, and the results of the previous nationwide survey.
+
+## Attrition Rate by City
+
+Using the same three categories (stopped before week 5, stopped after week 5, completed), I examined whether the patterns of attrition rates differ by city.
+
+**Figure 1**
+
+*Bar Chart to Show Differences in Attriton Rates by City*
+
+```{r q1b, echo = FALSE, message = FALSE}
+
+#creating data-frame with relevant numbers
+city_drop <- df %>% 
+  group_by(week_stopped, city) %>% 
+  summarise(number = n())
+  
+edi_drop <- city_drop %>% 
+  filter(city == "Edinburgh") # subsetting the df with participants only from Edinburgh
+
+#calculating drop-outs for before and after halfway, as well as finished. Repeat for each city
+
+edi_bhalf <- sum(edi_drop$number[1:4]) 
+edi_ahalf <- sum(edi_drop$number[5:8])
+edi_finished <- edi_drop$number[9]
+edi_total <- sum(edi_drop$number[1:9])
+  
+
+glas_drop <- city_drop %>% 
+  filter(city == "Glasgow")
+  
+glas_bhalf <- sum(glas_drop$number[1:4], na.rm = TRUE)
+glas_ahalf <- sum(glas_drop$number[5:6], na.rm = TRUE)
+glas_finished <- glas_drop$number[7]
+glas_total <- sum(glas_drop$number[1:7], na.rm = TRUE)
+
+  
+
+```
+
+```{r q1b graph, echo = FALSE, fig.align="center", ,fig.width = 14}
+
+#visualising differences in attrition rates by city
+city_drop %>% 
+  ggplot(aes(week_stopped, number, fill = city)) + 
+  geom_col() + 
+  labs(x = "Week Stopped" , y = "Number of Participants", title = "Attrition Rates by City") + 
+  facet_wrap(~city) + 
+  theme_minimal()
+
+```
+
+Due to the differences in number of participants between the two cities (`r df$city[df$city == "Edinburgh"] %>% length()` participants from Edinburgh and `r df$city[df$city == "Glasgow"] %>% length()` from Glasgow), comparisons were conducted as proportions rather than sums. The data suggests that:
+
+The proportion of participants from Edinburgh (`r edi_bhalf/edi_total* 100`%) who drop out before the half way mark is lower compared to participants from Glasgow (`r glas_bhalf/glas_total* 100`%).
+
+The proportion of participants from Edinburgh (`r edi_ahalf/edi_total* 100`%) who drop out after the half way mark is lower compared to participants from Glasgow (`r glas_ahalf/glas_total* 100`%).
+
+A higher proportion of participants from Edinburgh (`r edi_finished/edi_total * 100`%) finished the program compared to participants from Glasgow (`r glas_finished/glas_total * 100`%).
+
+## Age of participants by City
+
+Does the average ages of participants who commenced the programme differ by city?
+
+**Figure 2**
+
+*Bar Chart Showing Differences in Age by City*
+
+```{r q1c, echo = FALSE}
+
+#visualising difference in age by city
+df %>% 
+  select(age, city) %>% 
+  group_by(city) %>% 
+  summarise(mean = mean(age)) %>% 
+  ggplot(aes(city, mean, fill = city)) +
+  geom_col(show.legend = FALSE) + 
+  labs(x = "City", y = "Mean Age of Participants", title = "Mean Age of Participants by City") +
+  theme_classic() 
+
+age_ttest <- t.test(x = df$age[df$city=="Edinburgh"], y = df$age[df$city=="Glasgow"])
+
+```
+
+The mean age differs between the two cities, with participants in Edinburgh reporting an higher mean age (`r mean(df$age[df$city=="Edinburgh"])`) compared to participants in Glasgow (`r mean(df$age[df$city=="Glasgow"])`)
+
+The results of a Welch Two Sample t-test suggest this difference is not statistically significant with *t* (`r age_ttest$parameter`) = `r age_ttest$statistic`, *p* = `r age_ttest$p.value`
+
+------------------------------------------------------------------------
+
+# Examining Baseline Influences on Happiness Scores
+
+## Season
+
+Having cleaned the data and looked at some descriptives, we can turn to looking at happiness scores, and examining influences that are outside of the research question. This will guide the analysis when we get to variables of interest, and will act as a baseline for comparison. Firstly, I examined whether participants' happiness ratings affected by the season they were interviewed in.
+
+**Figure 3 & 4**
+
+*Bar Chart and Violin Boxplot to Show Mean Differences in Happiness by Season*
+
+```{r q2a graph , echo = FALSE, fig.align="center", ,fig.width = 14}
+
+plot3 <- df %>% 
+  group_by(season) %>% 
+  summarise(mean_happiness = mean(happiness)) %>% 
+  ggplot(aes(season, mean_happiness, fill = season)) + 
+  geom_col(position = position_dodge(.9)) +
+  labs(x = "Season", y = "Mean Happiness Score", title = "Mean Happiness Scores by Season") + # centre title
+  theme_classic() +
+  scale_fill_brewer(palette = "GnBu")
+
+plot4 <- df %>% 
+  select(happiness, season, health) %>% 
+  ggplot(aes(x = season , y = happiness, colour = season)) + 
+  geom_jitter(alpha = .3, show.legend =  FALSE) +
+  geom_violin(trim = FALSE, show.legend = FALSE, alpha = .4) + #violin plots :) 
+  geom_boxplot(width = .2, show.legend = FALSE, alpha = .7)+
+  coord_cartesian(ylim = c(0, 100)) + 
+  labs(x = "Season", y = "Happiness Scores", title = "Mean Happiness Scores") + 
+  theme_classic() +
+  scale_fill_brewer(palette = "GnBu")
+  
+
+plot3 + plot4
+```
+
+As can be seem from the graph, there are some differences between the mean scores reported on happiness depending on the season, particularly with summer reporting the highest mean score of happiness (`r mean(df$happiness[df$season == "summer"])`) and winter reporting the lowest (`r mean(df$happiness[df$season == "winter"])`).
+
+To test whether the season in which a participant was interviewed affected their happiness score, a categorical linear regression analysis was conducted.
+
+The results suggest that the seasons significantly predict change in happiness scores. The results can be seen in Table 1.
+
+**Table 1**
+
+*Results of Categorical Linear Regression Analysis of the Effects of Season on Happiness*
+
+```{r q2a linear regression, echo = FALSE, message = FALSE, error = FALSE}
+lm1 <- lm(happiness ~ season, data = df)
+
+#plot_model(lm1, type = "pred")
+
+tab_model(lm1)
+
+```
+
+Participants in spring reported a mean score of `r mean(df$happiness)` on the happiness scale.
+
+From here, being interviewed in the Summer predicted an increase of 4.06 units on the happiness scale, however, this was not statistically significant (*p* = .508)
+
+Being interviewed in the Autumn predicted a decrease of 19.89 units on the happiness scale, however, this was not statistically significant (*p* = .057).
+
+Being interviewed in the Winter predicted a decreas of 23.13 units on the happiness scale. This was statistically significant (*p* = .009).
+
+The season in which a participant was interviewed explained 8.8% (R/^2 = 0.088) of the variance in happiness scores.
+
+The F-statistic (F(3,128) = 4.11, p = .008) suggests that the model fits the data weakly, but significantly better than the null mean model.
+
+## Age
+
+What about age? Accounting for any effects of season, is happiness affected by age?
+
+A multiple regression analysis was used to assess the ability of seasons with addition to age to predict happiness test scores. The results suggest that seasons, but not age significantly predict changes in happiness scores. The results can be seen in table 2.
+
+**Table 2**
+
+*Results of Multiple Linear Regression Analysis of the Effects of Season and Age on Happiness*
+
+```{r q2b, message = FALSE, warning = FALSE}
+lm2 <- lm(happiness ~ season + age, data = df)
+
+#plot_model(lm2, type = "pred")
+
+tab_model(lm2)
+
+```
+
+The effects of season on happiness remained largely unchanged by the addition of age to the model.
+
+Age was an insignificant predictor of happiness (*p* = .776), with a predicted increase of 0.06 units on the happiness scale per year.
+
+A model including the season in which a participant was interviewed alongside age as predictors explained 8.9% (R/^2 = 0.089) of the variance in happiness scores. This is 0.1% more than the previous model with just season.
+
+The F-statistic (F(4,127) = 3.08, p = .0184) suggests that the model fits the data weakly, but significantly better than the null mean model.
+
+## Building Baseline Models
+
+Having examined factors that are not of interest to the research question allows for the creating of a baseline model. This model will be used in consequent analyses.
+
+```{r q2c}
+
+lm1 <- lm(happiness ~ season, data = df)
+
+```
+
+Due to age being an insignificant predictor of happiness, explaining an additional 0.1% of variance, I am hesitant to include it in the baseline model, and have decided to use the following linear model only using season.
+
+To ensure this model was fit to be used as a baseline, regression diagnostics were conducted to check for assumptions. No violation of assumption was found.
+
+```{r q2c assumption check, include = FALSE}
+
+plot(lm1)
+
+```
+
+Because of the above, I am going to be using *lm(happiness /~ season, data = df)* as my baseline model for the following questions.
+
+------------------------------------------------------------------------
+
+# Examining Program Influences on Happiness Scores
+
+## Completion
+
+Having built a baseline model, we can now examine whether variables associated with the df program influence participant happiness scores. One question that can be asked is whether participants' happiness ratings affected by whether or not they completed the programme?
+
+For the purpose of analysing whether participants' happiness ratings were by whether or not they completed the programme, participants were grouped on whether they completed (week_stopped ==9) or did not complete (week_stopped != 9) the programme.
+
+**Table 3**
+
+*Results of Multiple Linear Regression Analysis of the Effects of Season and Week Stopped on Happiness Scores*
+
+```{r q3a, warning = FALSE}
+
+df <- df %>% 
+  mutate(week_stopped = as.numeric(week_stopped))
+
+lm3 <- lm(happiness ~ season + prog_fin, data = df)
+
+#plot_model(lm3, type = "pred")
+
+tab_model(lm3) 
+
+#lot(lm3) for assumption checks
+
+```
+
+The baseline model with the addition of whether or not the participant finished the program was not a significant predictor of happiness scores.
+
+The model with season and program completion suggests that finishing this program increases scores in happiness by 13.46 units compared to the intercept of average happiness of a participant interviewed in spring. However, this was not statistically significant (*p* = .079)
+
+Furthermore, this model explained 11% (R/^2 = .11) of the variance in the data, which is 3% more than in the baseline model
+
+The F-statistic (F(3.92) = 3.08, p = .005) suggests that the model fits the data weakly, but significantly better than the null mean model.
+
+## Health
+
+Is happiness additionally affected by the "health metric"?
+
+**Table 4**
+
+*Results of Multiple Linear Regression Analysis of the Effects of Season, Week Stopped, and Health on Happiness Scores*
+
+```{r q3b}
+
+lm4 <- lm(happiness ~ season + prog_fin + health, data = df)
+
+#plot_model(lm4, type = "pred")
+
+tab_model(lm4)
+
+```
+
+The baseline model with the addition health metric is not a strong additional predictor of happiness increase.
+
+The model predicts that for a increase of 1 point on the health metric reduces the happiness score by .19. However, this was statistically insignificant, suggesting that this model was not better at predicting the outcome compared to the null model.
+
+This model explained 11% (R/^2 = 0.114) of the variance in the happiness metric, which is the same as the model without the health metric, suggesting that the health variable does not help explain more variance compared to the previous model.
+
+The F-statistic (F(5,126) = 3.23, p /< .001) suggests that the model fits the data weakly, but significantly better than the null mean model.
+
+## Interaction between Health and Week Stopped
+
+It's been hypothesised that the effects of good health are amplified by the feeling of acting healthily, such that the happiness of participants who got further along the programme might be more affected by the health metric than that of those who stopped earlier.
+
+To investigate the hypothesis of whether the happiness of participants who got further along the programme might be more affected by the health metric than that of those who stopped earlier, a multiple regression analysis was conducted including season of interview, week stopped and health as predictors. To test the hypothesis, an interaction between week stopped and the health metric was specified.
+
+**Table 5**
+
+*Results of Multiple Linear Regression Analysis of the Effects of Season, and the Interaction Between Week Stopped and Health on Happiness Scores*
+
+```{r q3c, echo = FALSE, message = FALSE}
+
+lm5 <- lm(happiness ~ season + week_stopped * health, data = df) #fitting model
+
+tab_model(lm5) #creating an APA table of results for regression analysis 
+
+
+```
+
+The season in which a participant was interviewed was still a strong predictor of happiness scores.
+
+The week stopped and health were also significant predictors.
+
+(see above)
+
+In particular, the further along the programme participants got, the higher the happiness scores reported.
+
+Health was a weak but significant predictor of happiness, suggesting that increases with the health metric predicted a slow decrease in happiness ratings.
+
+There was a significant interaction between health and week stopped, suggesting that the longer the participants lasted in the df programme, the more pronounced the effect of health is on happiness. While being statistically significant, this interaction predicted small increases in the happiness metric.
+
+However, the estimates and significance values provide an unclear picture so in order to explore this interaction further, an interaction plot was made to visualise the model.
+
+```{r q3c plot, echo = FALSE, fig.align="center", ,fig.width = 14}
+
+#lm5 <- lm(happiness ~ season + week_stopped * health, data = df)
+df <- df %>% 
+  mutate(week_stopped = as.numeric(week_stopped))
+
+
+df %>% 
+  select(happiness, season, prog_fin, health, week_stopped) %>%
+  group_by(season) %>% 
+  ggplot(aes(x = health , y = happiness, colour = week_stopped)) + 
+  geom_jitter(alpha = .3) +
+  geom_smooth(method = "lm", se = FALSE) 
+```
+
+This suggests to me that, the interaction would be better interpreted as groups of participants who have not finished and participants who have finished the program.
+
+------------------------------------------------------------------------
+
+## Investigation into the Interaction - Continued.
+
+When the week stopped variable is classed as a categorical variable, the above graph results in something the following.
+
+```{r optional analysis q3c, fig.width = 14}
+
+df <- df %>% 
+  mutate(week_stopped = as.factor(week_stopped))
+
+lm6 <- lm(happiness ~ season + week_stopped * health, data = df) #fitting model
+
+#plot_model(lm5, type = "pred") #plotting the model
+
+#tab_model(lm6) #creating an APA table of results for regression analysis
+
+df %>% 
+  select(happiness, season, week_stopped, health, prog_fin) %>% 
+  ggplot(aes(x = health , y = happiness, colour = week_stopped)) + 
+  geom_jitter(alpha = .3) +
+  geom_smooth(method = "lm", se = FALSE) 
+
+```
+
+What was expected is that participants who quit in week one would display a negative correlation between happiness and health, and with each progressive week in which participants remain in the programme, this correlation would slide towards being positive all the way until the week of completion.
+
+This is not the case, with participants from week 1 to week 6 displaying strong negative correlations between happiness and health. It is only in week 9, which exhibits a clear positive correlation, which must exert a strong influence on the model.
+
+Furthermore, when conducting this analysis with the week stopped as a categorical factor, this model suggests that there is only an interaction between finishing the programme (week_stopped == 9) and health metrics. This can suggest that only finishing the programme and the interaction between finishing the programme and health scores are significant predictor of happiness scores.
+
+This is very striking, especially when illustrated visually.
+
+```{r plot q3copt, echo = FALSE}
+
+df %>% 
+  select(happiness, season, week_stopped, health, prog_fin) %>% 
+  ggplot(aes(x = health , y = happiness, colour = prog_fin)) + 
+  geom_jitter(alpha = .3) +
+  geom_smooth(method = "lm", se = FALSE) + 
+  labs(x = "Health", y = "Happiness") + 
+  facet_wrap(~prog_fin)
+
+```
+
+From the plot above, it is very evident that completing the programme significantly changes the relationship between health and happiness. By visually examining this graph, we can see that participants who did not finish the programme show a strong negative correlation between health and happiness, and conversely, participants who completed the programme displayed a strong positive correlation between health and happiness.
+
+One potential line of analysis is to separate the dataset into participants who have completed the programme and those who have not and investigating separately whether there are differences between predictors.
+
+```{r q3copt_regression}
+
+week9_only <- df %>% 
+  filter(week_stopped == 9)
+
+lm_opt <- lm(happiness ~ season + health, data = week9_only)
+
+tab_model(lm_opt)
+  
+
+```
+
+In this model - which is identical to the one specified in Q3c, with the only difference of only including participants who finished the programme - health was a statistically significant predictor of health, with a single increase on the health metric corresponding to an increase of 1.28 points of happiness (*p* /< .001).
+
+```{r q3copt_regression_not_finished}
+
+not_week9 <- df %>% 
+  filter(week_stopped != 9)
+
+lm_optb <- lm(happiness ~ season + health, data = not_week9)
+
+tab_model(lm_optb)
+  
+
+```
+
+Oppositely, in participants who did not finish the programme, health was a statistically significant predictor of health, with a single increase on the health metric corresponding to an decrease of 1.92 points of happiness (*p* /< .001)
+
+## Conclusions about Happiness Scores
+
+What can we conclude about the various causes of happiness in our data? Write a brief description of the effects in the model, such as you might find in an academic paper.
+
+To investigate the hypothesis of whether the happiness of participants who got further along the programme might be more affected by the health metric than that of those who stopped earlier, a multiple regression analysis was conducted including season of interview, week stopped and health metric as predictors. To test the hypothesis, an interaction between week stopped and the health metric was specified.
+
+The season in which a participant was interviewed was still a strong predictor of happiness scores. Being interviewed in autumn and winter significantly predicted a drop in happiness scores (-30.67, *p* /< .001, and -34.96, *p* /< .001 respectively) compared to being mean happiness scores in spring.
+
+The week stopped (-29.38, *p* /< .001) and health (-3.72, *p* /< .001) were also significant predictors of happiness scores, however, this relationship is not clearly illustrated by the linear regression analysis.
+
+There was a significant interaction between health and week stopped, which suggests that the longer the participants last in the df programme, the more pronounced the effect of health is on happiness. While being statistically significant, this interaction predicted small increases in the happiness metric.
+
+This can be explained by the differing effects of health on happiness scores between participants who finished and did not finish the programme. The interaction for participants who did finish the program, with happiness of participants who finished were positively affected by the health metric compared to that of those who stopped earlier, who were affected inversely by this effect. Details of this can be found in the optional section of Q3C.
+
+This model explained 41% (R/^2 = 0.410) of the variance in the happiness metric, which is more than the previous model, suggesting that the interaction between the health and week stopped variable does help explain more variance compared to the previous model. The F-statistic (F(6,125) = 14.5, p /< .001) suggests that the model fits the data well, and significantly better than the null mean model.
+
+------------------------------------------------------------------------
+
+# Visualisation of Happiness Ratings by Season and City for Participants Who Completed the Program.
+
+**Figure 5**
+
+**Bar Chart to show Mean Happiness Scores by Season and City**
+
+```{r q4, echo = FALSE, message = FALSE, fig.align="center", ,fig.width = 14}
+q4 <- df %>% 
+  filter(week_stopped == 9) %>% #filtering for participants who finished the program
+  group_by(season, city) %>% #grouping by season and city
+  summarise(mean_happinness = mean(happiness)) #summarising the mean happiness scores
+
+q4 %>% 
+  ggplot(aes(city,mean_happinness, fill = season)) + 
+  geom_col(position = position_dodge(.9)) +
+  labs(x = "City", y = "Mean Happiness Score", title = "Mean Happiness Scores by Season and City") + #figure out how to make the title fit on one page
+  theme_classic() +
+  scale_fill_brewer(palette = "GnBu")
+
+```
+
+------------------------------------------------------------------------
+
+# Modelling Probability of Dropping Out
+
+/#/#Modelling
+
+To examine the likelihood of dropping out, whether a participant completed the program, or dropped out, was quantified, where dropping out = 1, and finishing = 0.
+
+Following this, a generalised linear regression analysis was done to examine whether there is a predictor for dropping out. City, accountability, happiness and heath were non-significant predictors for the likelihood of dropping out. Because of this, they were not included in the final model for the write-up.
+
+**Table 6**
+
+*Table to Show the Results of a Generalised Linear Regression*
+
+```{r q5a}
+#usful function 
+l2p <- function(logits) {
+  odds = exp(logits)
+  prob = odds/(1+odds)
+  return(prob)
+  }
+
+#Data Prep
+
+df <- df %>% 
+  mutate(drop_out = ifelse(week_stopped != 9, 1, 0)) #changed the value of week_stopped back to numeric from as it is now used as an outcome variable
+#1 = completion, 0 = drop-out
+
+#Mod
+lm6 <- glm(drop_out ~ selfmot + season, family = binomial, data = df)
+
+#Mel Building odel Diagnostics
+glm_coef <- coef(lm6)
+
+
+#summary(lm6)
+
+tab_model(lm6)
+
+
+
+```
+
+```{r q5 logit coef calc, include = FALSE}
+intercept <- glm_coef[1]
+glm_selfmot <- glm_coef[2]
+
+logits_dropout <- intercept + 14.2 * glm_selfmot
+
+l2p(logits_dropout)
+
+```
+
+------------------------------------------------------------------------
+
+**Table 7**
+
+*Table to Show the Results of a Analysis of Deviance*
+
+```{r q5a1}
+as.tibble(anova(lm6, test = "Chisq")) %>% 
+   kable(col.names = c("DF", "Deviance", "Residual DF", "Residual Deviance", "Pr ( > Chi)"), align = "c") %>% 
+  kable_styling(full_width =T)
+```
+
+```{r q5a2_accuracy, include = FALSE}
+#Accuracy 
+
+guess <- predict(lm6)
+guess <-  ifelse(guess>0, 1, 0)
+
+hits <- sum(guess == df$drop_out)
+hits/length(df$drop_out)
+```
+
+## Academic Style Write-Up
+
+Briefly describe the effects in your model as you would in an academic paper.
+
+A generalised linear regression analysis was conducted to examine whether there is a predictor for dropping out.
+
+Self motivation was a statistically significant predictor of dropping out, with lower scores on self motivation predicting a higher likelihood of dropping out (-4.3, *z* = 4.57, *p* /< .001).
+
+Adding self motivation to the model drops the residual deviance by 5.7 (*p*(X/^2 /> 5.7) = .017), suggesting that the model explains a small but significantly amount of deviance compared to the null model.
+
+For the mean score of self motivation (`r mean(df$selfmot)`) the probability of dropping out is `r l2p(9.13 +- 0.470*(14.2))`.
+
+Similarly, season was a predictor for the likelihood of dropping out, with summer (-4.976, *z* = -5.88, *p* /< .001), autumn (-4.692, *z* = -4.03, *p* /< .001) and winter (-6.135, *z* = -4.55, *p* /< .001) significantly predicting lower likelihoods of dropping out, compared to the baseline of spring.
+
+Adding season to the model drops the residual deviance by 93.7 (*p*(X/^2 /> 93.7) /<.001), suggesting that the model explains a significantly larger amount of deviance compared to the null model.
+
+The accuracy of this model was `r hits/length(df$drop_out)` suggesting the model explained `r hits/length(df$drop_out)`% of the deviance in the data correctly.
+
+## Graphic Representation
+
+Draw a graph representing the probability of quitting as a function of how self motivated participants are.
+
+**Figure 6**
+
+*Plot To Show the Probability of Quitting as a Function of Self Motivation*
+
+```{r q5c, message= FALSE, echo = FALSE, fig.align="center", ,fig.width = 14}
+
+df %>% ggplot(aes(x = selfmot, y = drop_out)) + 
+  geom_jitter(size = 4, height = .1, width = .5, alpha = .3) + 
+  geom_smooth(method = "glm", method.args = list(family = binomial), se = TRUE) + 
+  labs(x = "Self Motivation", y = "Probability of Dropping Out", title = "Probability of Quitting as a Function of How Self Motivated a Participant")
+
+```
