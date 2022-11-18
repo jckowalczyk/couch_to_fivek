@@ -2,13 +2,9 @@
 title: "Analysis of df Programe Data"
 author: "`Jakub Kowalczyk"
 date: "`r Sys.Date()`"
-output:  
-  md_document:
-    variant: markdown_github
-    
-always_allow_html: true
----
+output: html_document
 
+---
 
 ```{r setup, include=FALSE}
 
