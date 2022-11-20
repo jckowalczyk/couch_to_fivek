@@ -28,6 +28,12 @@ df <- read_csv("C:/Users/Jakub/Downloads/Data-Science-and-Statistics-Projects-ma
 
 ```
 
+# Couch to 5k 
+
+To view graphs and visualisations, please see https://jckowalczyk.github.io/couch_to_fivek/
+
+----
+
 This sample data comes from "Couch to 5k", an NHS-sponsored fitness programme which lasts 9 weeks, taking participants from a gentle start up to a half-hour run. In this project, I was asked to analyse the data that has been collected from participants in 2 cities (Edinburgh and Glasgow), all of whom started the Couch to 5k programme, across the course of a year.
 
 The researchers' have two primary interests:
